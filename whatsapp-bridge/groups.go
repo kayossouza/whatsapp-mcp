@@ -30,6 +30,7 @@ func registerGroupEndpoints(mux *http.ServeMux, auth func(http.HandlerFunc) http
 	registerGroupAdminEndpoints(mux, auth, client)
 	registerGroupInfoEndpoint(mux, auth, client)
 	registerGroupPhotoEndpoint(mux, auth, client, allowedMediaRoots)
+	registerProfilePictureEndpoint(mux, auth, client)
 	mux.HandleFunc("/api/create-group", auth(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -208,5 +209,44 @@ func registerGroupPhotoEndpoint(mux *http.ServeMux, auth func(http.HandlerFunc) 
 			return
 		}
 		_ = json.NewEncoder(w).Encode(map[string]string{"ok": "true", "picture_id": pictureID})
+	}))
+}
+
+type profilePictureRequest struct {
+	JID string `json:"jid"`
+}
+
+func registerProfilePictureEndpoint(mux *http.ServeMux, auth func(http.HandlerFunc) http.HandlerFunc, client *whatsmeow.Client) {
+	// POST /api/profile-picture {"jid": "<user or group jid>"} → {"url": "...", "id": "..."}
+	mux.HandleFunc("/api/profile-picture", auth(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var req profilePictureRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.JID == "" {
+			http.Error(w, "jid is required", http.StatusBadRequest)
+			return
+		}
+		jid, err := types.ParseJID(req.JID)
+		if err != nil {
+			http.Error(w, "invalid JID: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		w.Header().Set("Content-Type", "application/json")
+		info, err := client.GetProfilePictureInfo(ctx, jid, &whatsmeow.GetProfilePictureParams{})
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+			return
+		}
+		if info == nil {
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "no profile picture"})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]string{"url": info.URL, "id": info.ID})
 	}))
 }
