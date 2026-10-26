@@ -3271,3 +3271,15 @@ func TestRenderPairingQRCodes_Outcomes(t *testing.T) {
 		}
 	}
 }
+
+func TestExtractTextContent_ContactCard(t *testing.T) {
+	vcard := "BEGIN:VCARD\nFN:Juliana\nTEL:+55 27 99999-0000\nEND:VCARD"
+	msg := &waProto.Message{ContactMessage: &waProto.ContactMessage{
+		DisplayName: proto.String("Juliana"),
+		Vcard:       proto.String(vcard),
+	}}
+	got := extractTextContent(msg)
+	if !strings.Contains(got, "[contato] Juliana") || !strings.Contains(got, "TEL:+55 27 99999-0000") {
+		t.Fatalf("contact card not extracted: %q", got)
+	}
+}

@@ -1090,6 +1090,18 @@ func extractTextContent(msg *waProto.Message) string {
 		return extendedText.GetText()
 	}
 
+	// Shared contact cards: keep the vCard so the phone number is readable.
+	if contact := msg.GetContactMessage(); contact != nil {
+		return formatContactCard(contact)
+	}
+	if contacts := msg.GetContactsArrayMessage(); contacts != nil {
+		cards := make([]string, 0, len(contacts.GetContacts()))
+		for _, contact := range contacts.GetContacts() {
+			cards = append(cards, formatContactCard(contact))
+		}
+		return strings.Join(cards, "\n")
+	}
+
 	// Captions on media messages — surface them as searchable content
 	// alongside the media itself. Audio messages don't carry captions.
 	if img := msg.GetImageMessage(); img != nil {
@@ -3837,4 +3849,8 @@ func placeholderWaveform(duration uint32) []byte {
 	}
 
 	return waveform
+}
+
+func formatContactCard(contact *waProto.ContactMessage) string {
+	return fmt.Sprintf("[contato] %s\n%s", contact.GetDisplayName(), contact.GetVcard())
 }
