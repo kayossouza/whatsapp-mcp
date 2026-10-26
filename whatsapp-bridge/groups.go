@@ -24,6 +24,8 @@ type createGroupRequest struct {
 	Name         string   `json:"name"`
 	Participants []string `json:"participants"`
 	Topic        string   `json:"topic"`
+	// Community creates a WhatsApp community (no participants needed); joins need admin approval.
+	Community bool `json:"community"`
 }
 
 func registerGroupEndpoints(mux *http.ServeMux, auth func(http.HandlerFunc) http.HandlerFunc, client *whatsmeow.Client, allowedMediaRoots []string) {
@@ -37,7 +39,7 @@ func registerGroupEndpoints(mux *http.ServeMux, auth func(http.HandlerFunc) http
 			return
 		}
 		var req createGroupRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Name == "" || len(req.Participants) == 0 {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Name == "" || (len(req.Participants) == 0 && !req.Community) {
 			http.Error(w, "name and participants are required", http.StatusBadRequest)
 			return
 		}
@@ -52,7 +54,12 @@ func registerGroupEndpoints(mux *http.ServeMux, auth func(http.HandlerFunc) http
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		info, err := client.CreateGroup(ctx, whatsmeow.ReqCreateGroup{Name: req.Name, Participants: jids})
+		create := whatsmeow.ReqCreateGroup{Name: req.Name, Participants: jids}
+		if req.Community {
+			create.GroupParent = types.GroupParent{IsParent: true, DefaultMembershipApprovalMode: "request_required"}
+			create.GroupMembershipApprovalMode = types.GroupMembershipApprovalMode{IsJoinApprovalRequired: true}
+		}
+		info, err := client.CreateGroup(ctx, create)
 		w.Header().Set("Content-Type", "application/json")
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
@@ -60,6 +67,11 @@ func registerGroupEndpoints(mux *http.ServeMux, auth func(http.HandlerFunc) http
 			return
 		}
 		resp := map[string]interface{}{"ok": true, "jid": info.JID.String()}
+		if link, err := client.GetGroupInviteLink(ctx, info.JID, false); err == nil {
+			resp["invite_link"] = link
+		} else {
+			resp["invite_error"] = err.Error()
+		}
 		if req.Topic != "" {
 			if err := client.SetGroupTopic(ctx, info.JID, "", "", req.Topic); err != nil {
 				resp["topic_error"] = err.Error()
