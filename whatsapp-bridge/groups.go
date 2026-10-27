@@ -28,6 +28,8 @@ type createGroupRequest struct {
 	Community bool `json:"community"`
 	// Parent creates the group inside this community (participants optional).
 	Parent string `json:"parent"`
+	// Approval makes joins (including from inside the community) need admin approval.
+	Approval bool `json:"approval"`
 }
 
 func registerGroupEndpoints(mux *http.ServeMux, auth func(http.HandlerFunc) http.HandlerFunc, client *whatsmeow.Client, allowedMediaRoots []string) {
@@ -68,6 +70,9 @@ func registerGroupEndpoints(mux *http.ServeMux, auth func(http.HandlerFunc) http
 				return
 			}
 			create.GroupLinkedParent = types.GroupLinkedParent{LinkedParentJID: parent}
+		}
+		if req.Approval {
+			create.GroupMembershipApprovalMode = types.GroupMembershipApprovalMode{IsJoinApprovalRequired: true}
 		}
 		info, err := client.CreateGroup(ctx, create)
 		w.Header().Set("Content-Type", "application/json")
