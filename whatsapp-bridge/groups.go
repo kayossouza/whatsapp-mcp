@@ -192,6 +192,42 @@ func registerGroupInfoEndpoint(mux *http.ServeMux, auth func(http.HandlerFunc) h
 		}
 		_ = json.NewEncoder(w).Encode(info)
 	}))
+	// POST /api/group-settings {"group": jid, "name": "...", "topic": "..."}; empty fields stay as they are.
+	mux.HandleFunc("/api/group-settings", auth(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Group string `json:"group"`
+			Name  string `json:"name"`
+			Topic string `json:"topic"`
+		}
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Group == "" {
+			http.Error(w, "group is required", http.StatusBadRequest)
+			return
+		}
+		group, err := types.ParseJID(req.Group)
+		if err != nil {
+			http.Error(w, "invalid group: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		resp := map[string]string{"ok": "true"}
+		if req.Name != "" {
+			if err := client.SetGroupName(ctx, group, req.Name); err != nil {
+				resp["name_error"] = err.Error()
+			}
+		}
+		if req.Topic != "" {
+			if err := client.SetGroupTopic(ctx, group, "", "", req.Topic); err != nil {
+				resp["topic_error"] = err.Error()
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
 	// GET /api/subgroups?jid=<community jid>
 	mux.HandleFunc("/api/subgroups", auth(func(w http.ResponseWriter, r *http.Request) {
 		community, err := types.ParseJID(r.URL.Query().Get("jid"))
