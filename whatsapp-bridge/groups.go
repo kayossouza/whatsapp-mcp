@@ -26,6 +26,8 @@ type createGroupRequest struct {
 	Topic        string   `json:"topic"`
 	// Community creates a WhatsApp community (no participants needed); joins need admin approval.
 	Community bool `json:"community"`
+	// Parent creates the group inside this community (participants optional).
+	Parent string `json:"parent"`
 }
 
 func registerGroupEndpoints(mux *http.ServeMux, auth func(http.HandlerFunc) http.HandlerFunc, client *whatsmeow.Client, allowedMediaRoots []string) {
@@ -39,7 +41,7 @@ func registerGroupEndpoints(mux *http.ServeMux, auth func(http.HandlerFunc) http
 			return
 		}
 		var req createGroupRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Name == "" || (len(req.Participants) == 0 && !req.Community) {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Name == "" || (len(req.Participants) == 0 && !req.Community && req.Parent == "") {
 			http.Error(w, "name and participants are required", http.StatusBadRequest)
 			return
 		}
@@ -58,6 +60,14 @@ func registerGroupEndpoints(mux *http.ServeMux, auth func(http.HandlerFunc) http
 		if req.Community {
 			create.GroupParent = types.GroupParent{IsParent: true, DefaultMembershipApprovalMode: "request_required"}
 			create.GroupMembershipApprovalMode = types.GroupMembershipApprovalMode{IsJoinApprovalRequired: true}
+		}
+		if req.Parent != "" {
+			parent, err := types.ParseJID(req.Parent)
+			if err != nil {
+				http.Error(w, "invalid parent: "+err.Error(), http.StatusBadRequest)
+				return
+			}
+			create.GroupLinkedParent = types.GroupLinkedParent{LinkedParentJID: parent}
 		}
 		info, err := client.CreateGroup(ctx, create)
 		w.Header().Set("Content-Type", "application/json")
@@ -176,6 +186,24 @@ func registerGroupInfoEndpoint(mux *http.ServeMux, auth func(http.HandlerFunc) h
 			return
 		}
 		_ = json.NewEncoder(w).Encode(info)
+	}))
+	// GET /api/subgroups?jid=<community jid>
+	mux.HandleFunc("/api/subgroups", auth(func(w http.ResponseWriter, r *http.Request) {
+		community, err := types.ParseJID(r.URL.Query().Get("jid"))
+		if err != nil {
+			http.Error(w, "invalid jid: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		subgroups, err := client.GetSubGroups(ctx, community)
+		w.Header().Set("Content-Type", "application/json")
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(subgroups)
 	}))
 }
 
