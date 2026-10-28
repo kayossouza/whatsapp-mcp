@@ -214,7 +214,7 @@ func registerGroupInfoEndpoint(mux *http.ServeMux, auth func(http.HandlerFunc) h
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		resp := map[string]string{"ok": "true"}
+		resp := map[string]interface{}{"ok": true}
 		if req.Name != "" {
 			if err := client.SetGroupName(ctx, group, req.Name); err != nil {
 				resp["name_error"] = err.Error()
@@ -289,7 +289,7 @@ func registerGroupPhotoEndpoint(mux *http.ServeMux, auth func(http.HandlerFunc) 
 			_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 			return
 		}
-		_ = json.NewEncoder(w).Encode(map[string]string{"ok": "true", "picture_id": pictureID})
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "picture_id": pictureID})
 	}))
 }
 
