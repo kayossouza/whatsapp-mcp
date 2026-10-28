@@ -1,5 +1,116 @@
 # WhatsApp MCP Server
 
+> **This is a fork.** It tracks [verygoodplugins/whatsapp-mcp](https://github.com/verygoodplugins/whatsapp-mcp), maintained by [Very Good Plugins](https://verygoodplugins.com/?utm_source=github), which is itself a fork of [lharries/whatsapp-mcp](https://github.com/lharries/whatsapp-mcp) by Luke Harries. This fork adds group and community management endpoints to the Go bridge; everything after the next section is upstream's work and documentation. Maintained by [Kayo Souza](https://kinho.dev/en-US/open-source/whatsapp-mcp). MIT, like both upstreams.
+>
+> If the fork is useful to you, [★ Star it on GitHub](https://github.com/kayossouza/whatsapp-mcp): it helps other people find it.
+
+## What this fork adds
+
+REST endpoints on the bridge for managing WhatsApp groups and communities. They sit behind the same bearer token and loopback-only bind as the rest of the bridge API (see [Bridge authentication and media paths](#bridge-authentication-and-media-paths)). There are no MCP tools for them yet: call them over HTTP from scripts, or from an agent that can run `curl`.
+
+| Endpoint | Method | What it does |
+|---|---|---|
+| `/api/create-group` | POST | Create a group, a community, or a group inside a community. Returns the new JID and its invite link |
+| `/api/group-participants` | POST | Add or remove participants |
+| `/api/group-settings` | POST | Rename a group or change its description |
+| `/api/group-photo` | POST | Set a group photo from a JPEG inside `WHATSAPP_MEDIA_ROOTS` |
+| `/api/group-info` | GET | Group metadata and participants, as returned by whatsmeow |
+| `/api/subgroups` | GET | List the groups linked to a community |
+| `/api/profile-picture` | POST | Profile picture URL of a user or group |
+| `/api/revoke` | POST | Delete one of your own messages for everyone |
+
+Participants are phone numbers with country code (digits only) or full JIDs. WhatsApp adds the bridge's own account to every group it creates. Invalid input returns a plain-text 4xx; a WhatsApp error returns `{"error": "..."}` with status 500.
+
+```bash
+TOKEN=$(cat whatsapp-bridge/store/.bridge-token)
+API=http://127.0.0.1:8080/api
+```
+
+**Create a group.** `topic` is optional. Set `"approval": true` to require admin approval for new members.
+
+```bash
+curl -X POST $API/create-group -H "Authorization: Bearer $TOKEN" \
+  -d '{"name": "Launch team", "participants": ["15551234567", "15557654321"], "topic": "Launch planning"}'
+# {"ok": true, "jid": "120363000000000000@g.us", "invite_link": "https://chat.whatsapp.com/..."}
+```
+
+**Create a community.** No participants needed; joining needs admin approval.
+
+```bash
+curl -X POST $API/create-group -H "Authorization: Bearer $TOKEN" \
+  -d '{"name": "Customers", "community": true}'
+# {"ok": true, "jid": "120363000000000001@g.us", "invite_link": "https://chat.whatsapp.com/..."}
+```
+
+**Create a group inside a community.** `parent` is the community JID; participants are optional.
+
+```bash
+curl -X POST $API/create-group -H "Authorization: Bearer $TOKEN" \
+  -d '{"name": "Announcements", "parent": "120363000000000001@g.us", "approval": true}'
+```
+
+If the group is created but the invite link or the description fails, the response still has `"ok": true` and adds `invite_error` or `topic_error`.
+
+**List a community's groups.**
+
+```bash
+curl "$API/subgroups?jid=120363000000000001@g.us" -H "Authorization: Bearer $TOKEN"
+# [{"JID": "120363000000000002@g.us", "Name": "Announcements", "IsDefaultSubGroup": false, ...}]
+```
+
+**Add or remove participants.** `action` is `add` or `remove`. `result` has one entry per participant, with a non-zero `Error` code when WhatsApp refused that one (for example, when their privacy settings block being added).
+
+```bash
+curl -X POST $API/group-participants -H "Authorization: Bearer $TOKEN" \
+  -d '{"group": "120363000000000000@g.us", "action": "add", "participants": ["15551112222"]}'
+# {"ok": true, "result": [{"JID": "15551112222@s.whatsapp.net", "Error": 0, ...}]}
+```
+
+**Rename a group or change its description.** Empty fields are left as they are.
+
+```bash
+curl -X POST $API/group-settings -H "Authorization: Bearer $TOKEN" \
+  -d '{"group": "120363000000000000@g.us", "name": "Launch team Q4", "topic": "Weekly sync on Mondays"}'
+# {"ok": true}   (plus name_error or topic_error if one of them failed)
+```
+
+**Set the group photo.** The file must be a JPEG inside one of the `WHATSAPP_MEDIA_ROOTS` directories, the same rule `/api/send` applies to media.
+
+```bash
+curl -X POST $API/group-photo -H "Authorization: Bearer $TOKEN" \
+  -d '{"group": "120363000000000000@g.us", "path": "/home/me/.local/share/whatsapp-mcp/outbox/logo.jpg"}'
+# {"ok": true, "picture_id": "1700000000"}
+```
+
+**Read group info.**
+
+```bash
+curl "$API/group-info?jid=120363000000000000@g.us" -H "Authorization: Bearer $TOKEN"
+# {"JID": "120363000000000000@g.us", "Name": "Launch team", "Topic": "...", "Participants": [...], ...}
+```
+
+**Get a profile picture.** Works for users and groups. When there is no picture, or privacy settings hide it, the response is an error (404, or 500 with WhatsApp's error).
+
+```bash
+curl -X POST $API/profile-picture -H "Authorization: Bearer $TOKEN" \
+  -d '{"jid": "15551234567@s.whatsapp.net"}'
+# {"url": "https://pps.whatsapp.net/...", "id": "1700000000"}
+```
+
+**Delete your own message for everyone.** `message_id` is the message `id` from `list_messages`. The bridge does not mark the row as deleted in `messages.db` (your own sends are not echoed back to the bridge), so the local copy stays as it was.
+
+```bash
+curl -X POST $API/revoke -H "Authorization: Bearer $TOKEN" \
+  -d '{"chat": "15551234567@s.whatsapp.net", "message_id": "3EB0XXXXXXXXXXXXXXXX"}'
+# {"ok": true}
+```
+
+### Credits
+
+The bridge, the MCP server and everything else in this repository come from [Luke Harries](https://github.com/lharries/whatsapp-mcp) (the original project) and [Very Good Plugins](https://github.com/verygoodplugins/whatsapp-mcp) (the maintained fork this one tracks). The group endpoints are thin wrappers over [whatsmeow](https://github.com/tulir/whatsmeow). The fork's changes use the same MIT license; see [LICENSE](LICENSE).
+
+---
+
 [![CI](https://github.com/verygoodplugins/whatsapp-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/verygoodplugins/whatsapp-mcp/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
